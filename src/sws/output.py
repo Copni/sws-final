@@ -6,7 +6,33 @@ from typing import Callable
 
 import numpy as np
 
+from sws.preprocessing import HandVectorResult
 from sws.subtitles import normalize_subtitle_text
+
+
+HAND_CONNECTIONS = [
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 4),
+    (0, 5),
+    (5, 6),
+    (6, 7),
+    (7, 8),
+    (5, 9),
+    (9, 10),
+    (10, 11),
+    (11, 12),
+    (9, 13),
+    (13, 14),
+    (14, 15),
+    (15, 16),
+    (13, 17),
+    (17, 18),
+    (18, 19),
+    (19, 20),
+    (0, 17),
+]
 
 
 def compose_frame(
@@ -22,6 +48,27 @@ def compose_frame(
     if subtitle_text:
         _draw_subtitle(composed, subtitle_text, width, height, subtitle_height)
     return composed
+
+
+def draw_debug_overlay(
+    frame_bgr: np.ndarray,
+    hand_result: HandVectorResult | None,
+    confidence: float | None,
+) -> np.ndarray:
+    try:
+        import cv2
+    except Exception:
+        return frame_bgr
+
+    debug_frame = frame_bgr.copy()
+    if hand_result:
+        if hand_result.left_present:
+            _draw_hand_skeleton(cv2, debug_frame, hand_result.vector[:63], (0, 180, 255))
+        if hand_result.right_present:
+            _draw_hand_skeleton(cv2, debug_frame, hand_result.vector[63:], (60, 220, 60))
+
+    _draw_confidence(cv2, debug_frame, confidence)
+    return debug_frame
 
 
 def export_mp4(
@@ -175,6 +222,49 @@ def _draw_subtitle(
         x = max(12, (width - size[0]) // 2)
         y = start_y + offset * 32
         cv2.putText(composed, line, (x, y), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
+
+
+def _draw_hand_skeleton(cv2, frame_bgr: np.ndarray, hand_vector: np.ndarray, color: tuple[int, int, int]) -> None:
+    height, width = frame_bgr.shape[:2]
+    points: list[tuple[int, int]] = []
+    for index in range(21):
+        x = float(hand_vector[index * 3])
+        y = float(hand_vector[index * 3 + 1])
+        px = int(np.clip(x, 0.0, 1.0) * (width - 1))
+        py = int(np.clip(y, 0.0, 1.0) * (height - 1))
+        points.append((px, py))
+
+    for start, end in HAND_CONNECTIONS:
+        cv2.line(frame_bgr, points[start], points[end], color, 2, cv2.LINE_AA)
+    for point in points:
+        cv2.circle(frame_bgr, point, 4, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame_bgr, point, 3, color, -1, cv2.LINE_AA)
+
+
+def _draw_confidence(cv2, frame_bgr: np.ndarray, confidence: float | None) -> None:
+    text = "Confiance: -"
+    if confidence is not None:
+        text = f"Confiance: {confidence * 100:.1f}%"
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.62
+    thickness = 2
+    padding = 8
+    size, baseline = cv2.getTextSize(text, font, scale, thickness)
+    x, y = 12, 16
+    bottom_right = (x + size[0] + padding * 2, y + size[1] + baseline + padding * 2)
+    cv2.rectangle(frame_bgr, (x, y), bottom_right, (255, 255, 255), -1)
+    cv2.rectangle(frame_bgr, (x, y), bottom_right, (30, 30, 30), 1)
+    cv2.putText(
+        frame_bgr,
+        text,
+        (x + padding, y + padding + size[1]),
+        font,
+        scale,
+        (0, 0, 0),
+        thickness,
+        cv2.LINE_AA,
+    )
 
 
 def _draw_unicode_subtitle(

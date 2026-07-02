@@ -4,7 +4,8 @@ import numpy as np
 
 from sws.capture import WebcamCapture, is_probably_black_frame
 from sws.inference import TranslationResult
-from sws.output import compose_frame, export_mp4
+from sws.output import compose_frame, draw_debug_overlay, export_mp4
+from sws.preprocessing import HandVectorResult
 from sws.subtitles import PredictionStabilizer, SubtitleBuffer, normalize_subtitle_text
 
 
@@ -66,6 +67,21 @@ def test_compose_frame_keeps_subtitle_area_renderable_with_accents():
 
     subtitle_area = composed[80:]
     assert subtitle_area.min() < 255
+
+
+def test_draw_debug_overlay_adds_skeleton_and_confidence_without_mutating_source():
+    frame = np.zeros((120, 160, 3), dtype=np.uint8)
+    vector = np.zeros(126, dtype=np.float32)
+    for index in range(21):
+        vector[index * 3] = 0.2 + index * 0.02
+        vector[index * 3 + 1] = 0.2 + index * 0.01
+    hand_result = HandVectorResult(vector=vector, left_present=True, right_present=False)
+
+    debug = draw_debug_overlay(frame, hand_result, 0.87)
+
+    assert debug.shape == frame.shape
+    assert np.any(debug != frame)
+    assert np.all(frame == 0)
 
 
 def test_webcam_queue_keeps_only_latest_frame():

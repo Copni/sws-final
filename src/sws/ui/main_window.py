@@ -30,8 +30,8 @@ from PySide6.QtWidgets import (
 from sws.application import AppController
 from sws.capture import Mp4Reader, WebcamCapture, is_probably_black_frame, list_webcam_devices
 from sws.inference import TranslationEngine
-from sws.output import VirtualCameraSink, compose_frame, export_mp4
-from sws.preprocessing import MediaPipeHandsExtractor
+from sws.output import VirtualCameraSink, compose_frame, draw_debug_overlay, export_mp4
+from sws.preprocessing import HandVectorResult, MediaPipeHandsExtractor
 from sws.subtitles import PredictionStabilizer, SubtitleBuffer
 
 
@@ -56,17 +56,21 @@ class VideoWorker(QThread):
         source_value: str,
         engine: TranslationEngine,
         use_virtual_camera: bool,
+        show_debug_data: bool,
     ) -> None:
         super().__init__()
         self.source_kind = source_kind
         self.source_value = source_value
         self.engine = engine
         self.use_virtual_camera = use_virtual_camera
+        self.show_debug_data = show_debug_data
         self._running = True
         self._paused = False
         self._mutex = QMutex()
         self._black_frame_count = 0
         self._black_frame_reported = False
+        self._last_hand_result: HandVectorResult | None = None
+        self._last_confidence: float | None = None
 
     def pause(self, paused: bool) -> None:
         self._mutex.lock()
@@ -196,13 +200,19 @@ class VideoWorker(QThread):
             try:
                 hand_result = extractor.process(frame_bgr)
                 translation = self.engine.translate(hand_result.vector)
+                self._last_hand_result = hand_result
+                self._last_confidence = translation.confidence
                 latency = translation.latency_ms or 0.0
                 subtitles.apply(stabilizer.update(translation, timestamp))
                 last_inference = timestamp
             except Exception as exc:
                 self.status_changed.emit(f"Pretraitement indisponible : {exc}")
 
-        composed = compose_frame(frame_bgr, subtitles.current_text)
+        display_frame = frame_bgr
+        if self.show_debug_data:
+            display_frame = draw_debug_overlay(frame_bgr, self._last_hand_result, self._last_confidence)
+
+        composed = compose_frame(display_frame, subtitles.current_text)
         if self.use_virtual_camera and not virtual_camera.active:
             ok, message = virtual_camera.start(composed.shape[1], composed.shape[0], fps)
             self.output_changed.emit(message)
@@ -347,10 +357,12 @@ class MainWindow(QMainWindow):
         self.stop_button = QPushButton("Arreter")
         self.stop_button.setEnabled(False)
         self.virtual_camera_check = QCheckBox("Sortie camera virtuelle")
+        self.debug_data_check = QCheckBox("Afficher les donnees")
         controls.addWidget(self.start_button)
         controls.addWidget(self.pause_button)
         controls.addWidget(self.stop_button)
         controls.addWidget(self.virtual_camera_check)
+        controls.addWidget(self.debug_data_check)
         controls.addStretch(1)
         layout.addLayout(controls)
 
@@ -444,6 +456,7 @@ class MainWindow(QMainWindow):
             source_value,
             self.controller.engine,
             self.virtual_camera_check.isChecked(),
+            self.debug_data_check.isChecked(),
         )
         self.video_worker.frame_ready.connect(self._set_frame)
         self.video_worker.status_changed.connect(self.source_status.setText)
