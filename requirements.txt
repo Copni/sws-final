@@ -1,0 +1,9 @@
+numpy
+scikit-learn==1.5.2
+joblib
+mediapipe==0.10.21
+opencv-python==4.11.0.86
+PySide6
+
+# Optional runtime outputs
+pyvirtualcam
