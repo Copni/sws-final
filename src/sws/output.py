@@ -6,6 +6,8 @@ from typing import Callable
 
 import numpy as np
 
+from sws.subtitles import normalize_subtitle_text
+
 
 def compose_frame(
     frame_bgr: np.ndarray,
@@ -151,6 +153,10 @@ def _draw_subtitle(
     video_height: int,
     subtitle_height: int,
 ) -> None:
+    text = normalize_subtitle_text(text)
+    if _draw_unicode_subtitle(composed, text, width, video_height, subtitle_height):
+        return
+
     try:
         import cv2
     except Exception:
@@ -169,6 +175,72 @@ def _draw_subtitle(
         x = max(12, (width - size[0]) // 2)
         y = start_y + offset * 32
         cv2.putText(composed, line, (x, y), font, scale, (0, 0, 0), thickness, cv2.LINE_AA)
+
+
+def _draw_unicode_subtitle(
+    composed: np.ndarray,
+    text: str,
+    width: int,
+    video_height: int,
+    subtitle_height: int,
+) -> bool:
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except Exception:
+        return False
+
+    font = _load_subtitle_font(ImageFont, 26)
+    image = Image.fromarray(composed[..., ::-1])
+    draw = ImageDraw.Draw(image)
+    max_width = max(40, width - 32)
+    lines = _wrap_text_pillow(text, max_width, draw, font)[:2]
+    line_height = _text_size_pillow(draw, "Ag", font)[1] + 8
+    total_line_height = line_height * len(lines)
+    start_y = video_height + max(12, (subtitle_height - total_line_height) // 2)
+
+    for offset, line in enumerate(lines):
+        line_width, _ = _text_size_pillow(draw, line, font)
+        x = max(12, (width - line_width) // 2)
+        y = start_y + offset * line_height
+        draw.text((x, y), line, fill=(0, 0, 0), font=font)
+
+    composed[:] = np.asarray(image)[..., ::-1]
+    return True
+
+
+def _load_subtitle_font(image_font, size: int):
+    candidates = [
+        Path("C:/Windows/Fonts/arial.ttf"),
+        Path("C:/Windows/Fonts/segoeui.ttf"),
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/Library/Fonts/Arial Unicode.ttf"),
+    ]
+    for path in candidates:
+        if path.exists():
+            return image_font.truetype(str(path), size=size)
+    return image_font.load_default()
+
+
+def _wrap_text_pillow(text: str, max_width: int, draw, font) -> list[str]:
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        width = _text_size_pillow(draw, candidate, font)[0]
+        if current and width > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _text_size_pillow(draw, text: str, font) -> tuple[int, int]:
+    box = draw.textbbox((0, 0), text, font=font)
+    return box[2] - box[0], box[3] - box[1]
 
 
 def _wrap_text(text: str, max_width: int, font: int, scale: float, thickness: int) -> list[str]:

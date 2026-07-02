@@ -5,7 +5,7 @@ import numpy as np
 from sws.capture import WebcamCapture, is_probably_black_frame
 from sws.inference import TranslationResult
 from sws.output import compose_frame, export_mp4
-from sws.subtitles import PredictionStabilizer
+from sws.subtitles import PredictionStabilizer, SubtitleBuffer, normalize_subtitle_text
 
 
 def translation(text, confidence=0.9):
@@ -25,6 +25,30 @@ def test_stabilizer_emits_partial_then_final_without_duplicate_final():
     assert [event.text for event in events] == ["bonjour", "bonjour"]
 
 
+def test_subtitle_buffer_chains_final_words_and_current_partial():
+    buffer = SubtitleBuffer(max_words=4)
+
+    buffer.apply(stabilizer_events("final", "bonjour"))
+    buffer.apply(stabilizer_events("final", "merci"))
+    text = buffer.apply(stabilizer_events("partial", "cafe"))
+
+    assert text == "bonjour merci cafe"
+
+
+def test_subtitle_buffer_drops_oldest_words():
+    buffer = SubtitleBuffer(max_words=3)
+
+    for text in ["un deux", "trois", "quatre"]:
+        buffer.apply(stabilizer_events("final", text))
+
+    assert buffer.current_text == "deux trois quatre"
+
+
+def test_subtitle_text_repairs_common_mojibake():
+    assert normalize_subtitle_text("cafÃ©") == "café"
+    assert normalize_subtitle_text("  déjà   vu  ") == "déjà vu"
+
+
 def test_compose_frame_adds_white_subtitle_area_under_video():
     frame = np.zeros((10, 20, 3), dtype=np.uint8)
 
@@ -33,6 +57,15 @@ def test_compose_frame_adds_white_subtitle_area_under_video():
     assert composed.shape == (106, 20, 3)
     assert np.all(composed[:10] == 0)
     assert np.all(composed[10:] == 255)
+
+
+def test_compose_frame_keeps_subtitle_area_renderable_with_accents():
+    frame = np.zeros((80, 240, 3), dtype=np.uint8)
+
+    composed = compose_frame(frame, "déjà café ?", subtitle_height=80)
+
+    subtitle_area = composed[80:]
+    assert subtitle_area.min() < 255
 
 
 def test_webcam_queue_keeps_only_latest_frame():
@@ -57,3 +90,13 @@ def test_export_rejects_fake_mp4(tmp_path):
 
     assert ok is False
     assert "Impossible" in message or "aucune frame" in message
+
+
+def stabilizer_events(kind, text):
+    return [SubtitleEventForTest(kind=kind, text=text)]
+
+
+class SubtitleEventForTest:
+    def __init__(self, kind, text):
+        self.kind = kind
+        self.text = text
