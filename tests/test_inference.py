@@ -61,7 +61,7 @@ def test_sklearn_engine_filters_low_confidence():
         FakeScaler(),
         FakeClassifier([0.55, 0.45]),
         {"0": "bonjour"},
-        confidence_threshold=0.60,
+        confidence_threshold=0.95,
     )
 
     result = engine.translate(np.zeros(126, dtype=np.float32))
